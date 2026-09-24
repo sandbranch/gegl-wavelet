@@ -1,6 +1,6 @@
 project('gegl-wavelet', 'c',
   version: '0.1',
-  license: 'GPL-2.0-or-later',
+  license: 'GPL-2.0-or-later AND GPL-2.0-only',
   meson_version: '>= 0.60.0',
   default_options: ['warning_level=1', 'buildtype=debugoptimized'],
 )
@@ -16,9 +16,16 @@ if moduledir == ''
   moduledir = gegl_dep.get_variable(pkgconfig: 'pluginsdir')
 endif
 
-foreach op : ['wavelet-sharpen']
+# each operation is a module of its own
+operations = {
+  'wavelet-sharpen': ['operations/wavelet-sharpen.c'],
+  'wavelet-denoise': ['operations/wavelet-denoise.c',
+                      'operations/denoise-core.c'],
+}
+
+foreach op, sources : operations
   shared_module(op,
-    'operations' / op + '.c',
+    sources,
     name_prefix: '',
     include_directories: 'operations',
     dependencies: [gegl_dep, math_dep],
