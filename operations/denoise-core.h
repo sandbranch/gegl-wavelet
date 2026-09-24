@@ -14,7 +14,7 @@
 
 #include <stdlib.h>
 #include <math.h>
-#include <glib.h>
+#include <gegl.h>
 
 #define MAX2(x,y) ((x) > (y) ? (x) : (y))
 #define MIN2(x,y) ((x) < (y) ? (x) : (y))

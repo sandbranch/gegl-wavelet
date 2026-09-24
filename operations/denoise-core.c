@@ -12,8 +12,10 @@
  * as published by the Free Software Foundation.
  *
  * The colour model conversions and the wavelet transform are those of
- * the plugin files colorspace.c and wavelet.c, unchanged except that
- * the progress reporting to GIMP is left out.
+ * the plugin files colorspace.c and wavelet.c. The progress reporting to
+ * GIMP is left out, and the steps of the transform are spread over GEGL's
+ * threads without changing the arithmetic; for that, the temporaries of
+ * ycbcr2srgb are no longer static.
  */
 
 #include "denoise-core.h"
@@ -44,7 +46,7 @@ ycbcr2srgb (float **fimg, int size, int pc)
   /* using JPEG conversion here - expecting all channels to be
    * in [0:255] range */
   int i;
-  static float r, g, b;
+  float r, g, b;
 
   if (pc > 3) { /* single channel, colour */
     pc -= 4;
@@ -322,41 +324,160 @@ hat_transform (float *temp, float *base, int st, int size, int sc)
       + base[st * (2 * size - 2 - (i + sc))];
 }
 
+/* The steps of one wavelet level are spread over GEGL's threads where each
+   row, column or pixel is independent, so the result is the same as when
+   running serially. The noise statistics are summed serially, since a
+   different order of the sums could change their last digits. */
+
+/* columns processed together, so that they are read row by row */
+#define COLUMN_BLOCK 16
+
+typedef struct
+{
+  float **fimg;
+  int width, height, sc, hpass, lpass;
+  float threshold;
+  double low;
+  const double *stdev;
+} level_data;
+
+static void
+rows_pass (gsize offset, gsize count, gpointer user_data)
+{
+  level_data *d = user_data;
+  float *temp = g_new (float, d->width);
+  gsize row;
+  int col;
+
+  for (row = offset; row < offset + count; row++)
+    {
+      hat_transform (temp, d->fimg[d->hpass] + row * d->width, 1, d->width,
+		     d->sc);
+      for (col = 0; col < d->width; col++)
+	d->fimg[d->lpass][row * d->width + col] = temp[col] * 0.25;
+    }
+  g_free (temp);
+}
+
+static void
+columns_pass (gsize offset, gsize count, gpointer user_data)
+{
+  level_data *d = user_data;
+  float *temp = g_new (float, d->height);
+  float *block = g_new (float, (gsize) COLUMN_BLOCK * d->height);
+  float *base = d->fimg[d->lpass];
+  gsize first, n, b;
+  int row;
+
+  for (first = offset * COLUMN_BLOCK;
+       first < (offset + count) * COLUMN_BLOCK && first < (gsize) d->width;
+       first += COLUMN_BLOCK)
+    {
+      n = MIN2 ((gsize) COLUMN_BLOCK, d->width - first);
+
+      /* copy the columns of the block, reading row by row */
+      for (row = 0; row < d->height; row++)
+	for (b = 0; b < n; b++)
+	  block[b * d->height + row] = base[row * d->width + first + b];
+
+      for (b = 0; b < n; b++)
+	{
+	  hat_transform (temp, block + b * d->height, 1, d->height, d->sc);
+	  for (row = 0; row < d->height; row++)
+	    base[row * d->width + first + b] = temp[row] * 0.25;
+	}
+    }
+  g_free (block);
+  g_free (temp);
+}
+
+static void
+difference_pass (gsize offset, gsize count, gpointer user_data)
+{
+  level_data *d = user_data;
+  gsize i;
+
+  for (i = offset; i < offset + count; i++)
+    d->fimg[d->hpass][i] -= d->fimg[d->lpass][i];
+}
+
+static void
+threshold_pass (gsize offset, gsize count, gpointer user_data)
+{
+  level_data *d = user_data;
+  float **fimg = d->fimg, thold;
+  const double *stdev = d->stdev;
+  int hpass = d->hpass, lpass = d->lpass;
+  gsize i;
+
+  for (i = offset; i < offset + count; i++)
+    {
+      if (fimg[lpass][i] > 0.8) {
+	thold = d->threshold * stdev[4];
+      } else if (fimg[lpass][i] > 0.6) {
+	thold = d->threshold * stdev[3];
+      } else if (fimg[lpass][i] > 0.4) {
+	thold = d->threshold * stdev[2];
+      } else if (fimg[lpass][i] > 0.2) {
+	thold = d->threshold * stdev[1];
+      } else {
+	thold = d->threshold * stdev[0];
+      }
+
+      if (fimg[hpass][i] < -thold)
+	fimg[hpass][i] += thold - thold * d->low;
+      else if (fimg[hpass][i] > thold)
+	fimg[hpass][i] -= thold - thold * d->low;
+      else
+	fimg[hpass][i] *= d->low;
+
+      if (hpass)
+	fimg[0][i] += fimg[hpass][i];
+    }
+}
+
+static void
+sum_pass (gsize offset, gsize count, gpointer user_data)
+{
+  level_data *d = user_data;
+  gsize i;
+
+  for (i = offset; i < offset + count; i++)
+    d->fimg[0][i] = d->fimg[0][i] + d->fimg[d->lpass][i];
+}
+
 /* actual denoising algorithm. code copied from UFRaw (originates from dcraw) */
 void
 wavelet_denoise (float *fimg[3], unsigned int width,
 		 unsigned int height, float threshold, double low, float a,
 		 float b)
 {
-  float *temp, thold;
-  unsigned int i, lev, lpass, hpass, size, col, row;
+  float thold;
+  unsigned int i, lev, lpass = 0, hpass, size;
   double stdev[5];
   unsigned int samples[5];
+  level_data d;
 
   size = width * height;
-
-  temp = g_new (float, MAX2 (width, height));
+  d.fimg = fimg;
+  d.width = width;
+  d.height = height;
+  d.threshold = threshold;
+  d.low = low;
+  d.stdev = stdev;
 
   hpass = 0;
   for (lev = 0; lev < 5; lev++)
     {
       lpass = ((lev & 1) + 1);
-      for (row = 0; row < height; row++)
-	{
-	  hat_transform (temp, fimg[hpass] + row * width, 1, width, 1 << lev);
-	  for (col = 0; col < width; col++)
-	    {
-	      fimg[lpass][row * width + col] = temp[col] * 0.25;
-	    }
-	}
-      for (col = 0; col < width; col++)
-	{
-	  hat_transform (temp, fimg[lpass] + col, width, height, 1 << lev);
-	  for (row = 0; row < height; row++)
-	    {
-	      fimg[lpass][row * width + col] = temp[row] * 0.25;
-	    }
-	}
+      d.sc = 1 << lev;
+      d.hpass = hpass;
+      d.lpass = lpass;
+
+      gegl_parallel_distribute_range (height, 4.0, rows_pass, &d);
+      gegl_parallel_distribute_range ((width + COLUMN_BLOCK - 1)
+				      / COLUMN_BLOCK, 1.0, columns_pass, &d);
+      gegl_parallel_distribute_range (size, 1024.0, difference_pass, &d);
 
       thold =
 	5.0 / (1 << 6) * exp (-2.6 * sqrt (lev + 1)) * 0.8002 / exp (-2.6);
@@ -368,7 +489,6 @@ wavelet_denoise (float *fimg[3], unsigned int width,
       /* calculate stdevs for all intensities */
       for (i = 0; i < size; i++)
 	{
-	  fimg[hpass][i] -= fimg[lpass][i];
 	  if (fimg[hpass][i] < thold && fimg[hpass][i] > -thold)
 	    {
 	      if (fimg[lpass][i] > 0.8) {
@@ -395,37 +515,11 @@ wavelet_denoise (float *fimg[3], unsigned int width,
       stdev[3] = sqrt (stdev[3] / (samples[3] + 1));
       stdev[4] = sqrt (stdev[4] / (samples[4] + 1));
 
-
       /* do thresholding */
-      for (i = 0; i < size; i++)
-	{
-	  if (fimg[lpass][i] > 0.8) {
-	    thold = threshold * stdev[4];
-	  } else if (fimg[lpass][i] > 0.6) {
-	    thold = threshold * stdev[3];
-	  } else if (fimg[lpass][i] > 0.4) {
-	    thold = threshold * stdev[2];
-	  } else if (fimg[lpass][i] > 0.2) {
-	    thold = threshold * stdev[1];
-	  } else {
-	    thold = threshold * stdev[0];
-	  }
-
-	  if (fimg[hpass][i] < -thold)
-	    fimg[hpass][i] += thold - thold * low;
-	  else if (fimg[hpass][i] > thold)
-	    fimg[hpass][i] -= thold - thold * low;
-	  else
-	    fimg[hpass][i] *= low;
-
-	  if (hpass)
-	    fimg[0][i] += fimg[hpass][i];
-	}
+      gegl_parallel_distribute_range (size, 1024.0, threshold_pass, &d);
       hpass = lpass;
     }
 
-  for (i = 0; i < size; i++)
-    fimg[0][i] = fimg[0][i] + fimg[lpass][i];
-
-  g_free (temp);
+  d.lpass = lpass;
+  gegl_parallel_distribute_range (size, 1024.0, sum_pass, &d);
 }

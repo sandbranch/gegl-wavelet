@@ -127,6 +127,43 @@ get_cached_region (GeglOperation       *operation,
   return in ? *in : *roi;
 }
 
+/* the colour model conversions work pixel by pixel, so they are spread
+   over GEGL's threads in ranges of pixels */
+typedef struct
+{
+  float **fimg;
+  void (*to_model) (float **fimg, int size);
+  void (*from_model) (float **fimg, int size, int pc);
+} convert_data;
+
+static void
+convert_range (gsize offset, gsize count, gpointer user_data)
+{
+  convert_data *c = user_data;
+  float *part[3] = { c->fimg[0] + offset, c->fimg[1] + offset,
+                     c->fimg[2] + offset };
+
+  if (c->to_model)
+    c->to_model (part, count);
+  else
+    c->from_model (part, count, 0);
+}
+
+static void
+convert (float **fimg, gsize size, gint model, gboolean to_model)
+{
+  convert_data c = { fimg, NULL, NULL };
+
+  if (to_model)
+    c.to_model = model == WAVELET_DENOISE_YCBCR ? srgb2ycbcr
+      : model == WAVELET_DENOISE_LAB ? srgb2lab : srgb2rgb;
+  else
+    c.from_model = model == WAVELET_DENOISE_YCBCR ? ycbcr2srgb
+      : model == WAVELET_DENOISE_LAB ? lab2srgb : rgb2srgb;
+
+  gegl_parallel_distribute_range (size, 1024.0, convert_range, &c);
+}
+
 static gboolean
 process (GeglOperation       *operation,
          GeglBuffer          *input,
@@ -183,14 +220,7 @@ process (GeglOperation       *operation,
 
   /* do colour model conversion sRGB[0,1] -> whatever */
   if (channels > 2)
-    {
-      if (o->color_model == WAVELET_DENOISE_YCBCR)
-        srgb2ycbcr (fimg, size);
-      else if (o->color_model == WAVELET_DENOISE_LAB)
-        srgb2lab (fimg, size);
-      else
-        srgb2rgb (fimg, size);
-    }
+    convert (fimg, size, o->color_model, TRUE);
 
   /* denoise the channels individually */
   for (c = 0; c < channels; c++)
@@ -204,14 +234,7 @@ process (GeglOperation       *operation,
 
   /* retransform the image data */
   if (channels > 2)
-    {
-      if (o->color_model == WAVELET_DENOISE_YCBCR)
-        ycbcr2srgb (fimg, size, 0);
-      else if (o->color_model == WAVELET_DENOISE_LAB)
-        lab2srgb (fimg, size, 0);
-      else
-        rgb2srgb (fimg, size, 0);
-    }
+    convert (fimg, size, o->color_model, FALSE);
 
   /* alpha stays in [0,1]; colour is limited by the precision of the
      image when GIMP stores the result, and floating point images keep
