@@ -31,43 +31,87 @@ property_enum (color_model, _("Color model"),
                  "noise can be removed without touching detail. Ignored for "
                  "grayscale images."))
 
-property_double (threshold_1, _("Threshold 1 (Y, L*, R, gray)"), 0.0)
-  description (_("Threshold of the first channel, the value below which "
-                 "everything is considered noise. 0 leaves it untouched."))
+property_double (threshold_1, _("Threshold 1"), 0.0)
+  description (_("The value below which everything is considered noise, from 0.0 "
+                 "(none) to 10.0. For grayscale images only the first channel "
+                 "is used."))
   value_range (0.0, 10.0)
   ui_digits (2)
-property_double (softness_1, _("Softness 1 (Y, L*, R, gray)"), 0.0)
-  description (_("Softness of the thresholding of the first channel. The "
-                 "higher the softness the more noise remains."))
+  ui_meta ("label", "[color-model {ycbcr} : ycbcr-label,"
+                    " color-model {lab} : lab-label,"
+                    " color-model {rgb} : rgb-label]")
+  ui_meta ("ycbcr-label", _("Luminance (Y) threshold"))
+  ui_meta ("lab-label", _("Lightness (L*) threshold"))
+  ui_meta ("rgb-label", _("Red threshold"))
+property_double (softness_1, _("Softness 1"), 0.0)
+  description (_("Softness of the thresholding. The higher the softness the "
+                 "more noise remains."))
   value_range (0.0, 1.0)
   ui_digits (2)
+  ui_meta ("label", "[color-model {ycbcr} : ycbcr-label,"
+                    " color-model {lab} : lab-label,"
+                    " color-model {rgb} : rgb-label]")
+  ui_meta ("ycbcr-label", _("Luminance (Y) softness"))
+  ui_meta ("lab-label", _("Lightness (L*) softness"))
+  ui_meta ("rgb-label", _("Red softness"))
 
-property_double (threshold_2, _("Threshold 2 (Cb, a*, G)"), 0.4)
-  description (_("Threshold of the second channel."))
+property_double (threshold_2, _("Threshold 2"), 0.4)
+  description (_("The value below which everything is considered noise."))
   value_range (0.0, 10.0)
   ui_digits (2)
-property_double (softness_2, _("Softness 2 (Cb, a*, G)"), 0.0)
-  description (_("Softness of the thresholding of the second channel."))
+  ui_meta ("label", "[color-model {ycbcr} : ycbcr-label,"
+                    " color-model {lab} : lab-label,"
+                    " color-model {rgb} : rgb-label]")
+  ui_meta ("ycbcr-label", _("Blue chroma (Cb) threshold"))
+  ui_meta ("lab-label", _("Green-red (a*) threshold"))
+  ui_meta ("rgb-label", _("Green threshold"))
+property_double (softness_2, _("Softness 2"), 0.0)
+  description (_("Softness of the thresholding. The higher the softness the "
+                 "more noise remains."))
   value_range (0.0, 1.0)
   ui_digits (2)
+  ui_meta ("label", "[color-model {ycbcr} : ycbcr-label,"
+                    " color-model {lab} : lab-label,"
+                    " color-model {rgb} : rgb-label]")
+  ui_meta ("ycbcr-label", _("Blue chroma (Cb) softness"))
+  ui_meta ("lab-label", _("Green-red (a*) softness"))
+  ui_meta ("rgb-label", _("Green softness"))
 
-property_double (threshold_3, _("Threshold 3 (Cr, b*, B)"), 0.4)
-  description (_("Threshold of the third channel."))
+property_double (threshold_3, _("Threshold 3"), 0.4)
+  description (_("The value below which everything is considered noise."))
   value_range (0.0, 10.0)
   ui_digits (2)
-property_double (softness_3, _("Softness 3 (Cr, b*, B)"), 0.0)
-  description (_("Softness of the thresholding of the third channel."))
+  ui_meta ("label", "[color-model {ycbcr} : ycbcr-label,"
+                    " color-model {lab} : lab-label,"
+                    " color-model {rgb} : rgb-label]")
+  ui_meta ("ycbcr-label", _("Red chroma (Cr) threshold"))
+  ui_meta ("lab-label", _("Blue-yellow (b*) threshold"))
+  ui_meta ("rgb-label", _("Blue threshold"))
+property_double (softness_3, _("Softness 3"), 0.0)
+  description (_("Softness of the thresholding. The higher the softness the "
+                 "more noise remains."))
   value_range (0.0, 1.0)
   ui_digits (2)
+  ui_meta ("label", "[color-model {ycbcr} : ycbcr-label,"
+                    " color-model {lab} : lab-label,"
+                    " color-model {rgb} : rgb-label]")
+  ui_meta ("ycbcr-label", _("Red chroma (Cr) softness"))
+  ui_meta ("lab-label", _("Blue-yellow (b*) softness"))
+  ui_meta ("rgb-label", _("Blue softness"))
+
+property_boolean (denoise_alpha, _("Denoise alpha"), FALSE)
+  description (_("Also denoise the alpha channel."))
 
 property_double (threshold_alpha, _("Alpha threshold"), 0.0)
   description (_("Threshold of the alpha channel."))
   value_range (0.0, 10.0)
   ui_digits (2)
+  ui_meta ("visible", "denoise-alpha")
 property_double (softness_alpha, _("Alpha softness"), 0.0)
   description (_("Softness of the thresholding of the alpha channel."))
   value_range (0.0, 1.0)
   ui_digits (2)
+  ui_meta ("visible", "denoise-alpha")
 
 #else
 
@@ -175,7 +219,7 @@ process (GeglOperation       *operation,
   const Babl *format = gegl_operation_get_format (operation, "output");
   const GeglRectangle *bounds;
   GeglRectangle area, strip_rect;
-  double thresholds[4], low[4];
+  double thresholds[4], low[4], alpha_threshold;
   float *fimg[4] = { NULL, NULL, NULL, NULL };
   float *work[3] = { NULL, NULL, NULL };
   float *strip;
@@ -191,10 +235,11 @@ process (GeglOperation       *operation,
 
   /* the colour channels plus alpha, whose settings are the last ones */
   channels = babl_format_get_n_components (format);
+  alpha_threshold = o->denoise_alpha ? o->threshold_alpha : 0.0;
   thresholds[0] = o->threshold_1;
-  thresholds[1] = channels > 2 ? o->threshold_2 : o->threshold_alpha;
+  thresholds[1] = channels > 2 ? o->threshold_2 : alpha_threshold;
   thresholds[2] = o->threshold_3;
-  thresholds[3] = o->threshold_alpha;
+  thresholds[3] = alpha_threshold;
   low[0] = o->softness_1;
   low[1] = channels > 2 ? o->softness_2 : o->softness_alpha;
   low[2] = o->softness_3;

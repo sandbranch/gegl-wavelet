@@ -25,10 +25,13 @@ channel is never sharpened.
 ## Wavelet Denoise
 
 Settings: the color model (YCbCr, CIELAB or RGB) and a threshold and softness
-for each channel and for alpha. YCbCr and CIELAB separate brightness from
+for each channel. The slider labels follow the color model, e.g. "Luminance
+(Y) threshold" and "Blue chroma (Cb) threshold" in YCbCr, or "Lightness (L*)"
+and "Green-red (a*)" in CIELAB. YCbCr and CIELAB separate brightness from
 color, so color noise can be removed strongly while detail in the brightness
-channel is left alone. The labels name the channel in every model, e.g.
-"Threshold 2 (Cb, a*, G)".
+channel is left alone. The alpha channel is denoised only when "Denoise alpha"
+is checked, which also shows its sliders. For grayscale images only the first
+channel's sliders have an effect.
 
 The noise is measured over the whole layer, so the filter always processes all
 of it; the results equal those of the plug-in on the whole image (identical in
