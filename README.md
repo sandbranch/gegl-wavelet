@@ -67,6 +67,12 @@ the Flatpak, using the GNOME SDK that GIMP was built with (see
 
 Restart GIMP after installing.
 
+## Tests
+
+`tests/run.sh` runs both operations from `build/` on a test image with
+the GEGL of the Flatpak GIMP and checks that denoise removes noise and
+keeps edges, and that sharpen steepens edges and keeps flat areas.
+
 ## License
 
 Each operation keeps the license of its plug-in: `wavelet:sharpen` is GPL
