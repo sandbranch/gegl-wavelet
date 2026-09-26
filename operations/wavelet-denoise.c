@@ -149,26 +149,96 @@ prepare (GeglOperation *operation)
 }
 
 /* the noise is measured over the whole image, so every result needs all
-   of the input, and is computed once for all of it */
+   of the input, and is computed once for all of it; an input without
+   bounds, such as a pattern, is passed through */
+static gboolean
+get_area (GeglOperation *operation,
+          GeglRectangle *area)
+{
+  const GeglRectangle *in = gegl_operation_source_get_bounding_box (operation,
+                                                                     "input");
+
+  if (!in || gegl_rectangle_is_infinite_plane (in))
+    return FALSE;
+  *area = *in;
+  return TRUE;
+}
+
 static GeglRectangle
 get_required_for_output (GeglOperation       *operation,
                          const gchar         *input_pad,
                          const GeglRectangle *roi)
 {
-  const GeglRectangle *in = gegl_operation_source_get_bounding_box (operation,
-                                                                     "input");
+  GeglRectangle area;
 
-  return in ? *in : *roi;
+  return get_area (operation, &area) ? area : *roi;
 }
 
 static GeglRectangle
 get_cached_region (GeglOperation       *operation,
                    const GeglRectangle *roi)
 {
-  const GeglRectangle *in = gegl_operation_source_get_bounding_box (operation,
-                                                                     "input");
+  GeglRectangle area;
 
-  return in ? *in : *roi;
+  return get_area (operation, &area) ? area : *roi;
+}
+
+/* the thresholds of the colour channels and alpha, in the order of the
+   channels of the format; FALSE if none of them denoises */
+static gboolean
+get_settings (GeglProperties *o,
+              gint            channels,
+              double          thresholds[4],
+              double          low[4])
+{
+  double alpha_threshold = o->denoise_alpha ? o->threshold_alpha : 0.0;
+  gint c;
+
+  thresholds[0] = o->threshold_1;
+  thresholds[1] = channels > 2 ? o->threshold_2 : alpha_threshold;
+  thresholds[2] = o->threshold_3;
+  thresholds[3] = alpha_threshold;
+  low[0] = o->softness_1;
+  low[1] = channels > 2 ? o->softness_2 : o->softness_alpha;
+  low[2] = o->softness_3;
+  low[3] = o->softness_alpha;
+
+  for (c = 0; c < channels; c++)
+    if (thresholds[c] > 0)
+      return TRUE;
+  return FALSE;
+}
+
+/* the input is passed on untouched when nothing is denoised: the colour
+   model conversions alone would change it slightly */
+static gboolean
+operation_process (GeglOperation        *operation,
+                   GeglOperationContext *context,
+                   const gchar          *output_prop,
+                   const GeglRectangle  *result,
+                   gint                  level)
+{
+  GeglOperationClass *operation_class;
+  const Babl *format = gegl_operation_get_format (operation, "output");
+  double thresholds[4], low[4];
+  GeglRectangle area;
+
+  operation_class = GEGL_OPERATION_CLASS (gegl_op_parent_class);
+
+  if (!get_area (operation, &area)
+      || !get_settings (GEGL_PROPERTIES (operation),
+                        babl_format_get_n_components (format), thresholds,
+                        low))
+    {
+      gpointer in = gegl_operation_context_get_object (context, "input");
+
+      gegl_operation_context_take_object (context, "output",
+                                          in ? g_object_ref (in) : NULL);
+      return TRUE;
+    }
+
+  return operation_class->process (operation, context, output_prop, result,
+                                   gegl_operation_context_get_level (context));
 }
 
 /* the colour model conversions work pixel by pixel, so they are spread
@@ -176,8 +246,8 @@ get_cached_region (GeglOperation       *operation,
 typedef struct
 {
   float **fimg;
-  void (*to_model) (float **fimg, int size);
-  void (*from_model) (float **fimg, int size, int pc);
+  void (*to_model) (float **fimg, gsize size);
+  void (*from_model) (float **fimg, gsize size, int pc);
 } convert_data;
 
 static void
@@ -208,6 +278,15 @@ convert (float **fimg, gsize size, gint model, gboolean to_model)
   gegl_parallel_distribute_range (size, 1024.0, convert_range, &c);
 }
 
+static void
+free_planes (float **planes, gint n)
+{
+  gint c;
+
+  for (c = 0; c < n; c++)
+    g_free (planes[c]);
+}
+
 static gboolean
 process (GeglOperation       *operation,
          GeglBuffer          *input,
@@ -217,17 +296,17 @@ process (GeglOperation       *operation,
 {
   GeglProperties *o = GEGL_PROPERTIES (operation);
   const Babl *format = gegl_operation_get_format (operation, "output");
-  const GeglRectangle *bounds;
   GeglRectangle area, strip_rect;
-  double thresholds[4], low[4], alpha_threshold;
+  double thresholds[4], low[4];
   float *fimg[4] = { NULL, NULL, NULL, NULL };
   float *work[3] = { NULL, NULL, NULL };
-  float *strip;
+  float *strip = NULL;
   gint channels, c, y, rows, width, height;
+  gboolean alloc_ok;
   gsize i, size;
 
-  bounds = gegl_operation_source_get_bounding_box (operation, "input");
-  area = bounds ? *bounds : *result;
+  if (!get_area (operation, &area))
+    area = *result;
   width = area.width;
   height = area.height;
   if (width <= 0 || height <= 0)
@@ -235,22 +314,28 @@ process (GeglOperation       *operation,
 
   /* the colour channels plus alpha, whose settings are the last ones */
   channels = babl_format_get_n_components (format);
-  alpha_threshold = o->denoise_alpha ? o->threshold_alpha : 0.0;
-  thresholds[0] = o->threshold_1;
-  thresholds[1] = channels > 2 ? o->threshold_2 : alpha_threshold;
-  thresholds[2] = o->threshold_3;
-  thresholds[3] = alpha_threshold;
-  low[0] = o->softness_1;
-  low[1] = channels > 2 ? o->softness_2 : o->softness_alpha;
-  low[2] = o->softness_3;
-  low[3] = o->softness_alpha;
+  get_settings (o, channels, thresholds, low);
 
+  /* one plane per channel plus two for the wavelet transform, as much as
+     the plugin needs; a failure leaves the image as it is instead of
+     ending GIMP */
   size = (gsize) width * height;
+  alloc_ok = TRUE;
   for (c = 0; c < channels; c++)
-    fimg[c] = g_new (float, size);
-  work[1] = g_new (float, size);
-  work[2] = g_new (float, size);
-  strip = g_new (float, (gsize) width * STRIP_HEIGHT * channels);
+    alloc_ok = alloc_ok && (fimg[c] = g_try_new (float, size)) != NULL;
+  alloc_ok = alloc_ok && (work[1] = g_try_new (float, size)) != NULL;
+  alloc_ok = alloc_ok && (work[2] = g_try_new (float, size)) != NULL;
+  alloc_ok = alloc_ok && (strip = g_try_new (float, (gsize) width
+                                             * STRIP_HEIGHT * channels)) != NULL;
+  if (!alloc_ok)
+    {
+      g_warning ("wavelet:denoise: not enough memory for %d x %d pixels, "
+                 "the image is left as it is", width, height);
+      gegl_buffer_copy (input, &area, GEGL_ABYSS_NONE, output, &area);
+      free_planes (fimg, channels);
+      free_planes (work + 1, 2);
+      return TRUE;
+    }
 
   for (y = 0; y < height; y += STRIP_HEIGHT)
     {
@@ -273,8 +358,7 @@ process (GeglOperation       *operation,
       if (thresholds[c] <= 0)
         continue;
       work[0] = fimg[c];
-      wavelet_denoise (work, width, height, (float) thresholds[c], low[c],
-                       0, 0);
+      wavelet_denoise (work, width, height, (float) thresholds[c], low[c]);
     }
 
   /* retransform the image data */
@@ -299,10 +383,8 @@ process (GeglOperation       *operation,
     }
 
   g_free (strip);
-  for (c = 0; c < channels; c++)
-    g_free (fimg[c]);
-  g_free (work[1]);
-  g_free (work[2]);
+  free_planes (fimg, channels);
+  free_planes (work + 1, 2);
 
   return TRUE;
 }
@@ -314,6 +396,7 @@ gegl_op_class_init (GeglOpClass *klass)
   GeglOperationFilterClass *filter_class = GEGL_OPERATION_FILTER_CLASS (klass);
 
   operation_class->prepare = prepare;
+  operation_class->process = operation_process;
   operation_class->get_required_for_output = get_required_for_output;
   operation_class->get_cached_region = get_cached_region;
   operation_class->threaded = FALSE;

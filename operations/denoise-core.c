@@ -21,11 +21,11 @@
 #include "denoise-core.h"
 
 void
-srgb2ycbcr (float ** fimg, int size)
+srgb2ycbcr (float ** fimg, gsize size)
 {
   /* using JPEG conversion here - expecting all channels to be
    * in [0:255] range */
-  int i;
+  gsize i;
   float y, cb, cr;
 
   for (i = 0; i < size; i++) {
@@ -41,11 +41,11 @@ srgb2ycbcr (float ** fimg, int size)
 }
 
 void
-ycbcr2srgb (float **fimg, int size, int pc)
+ycbcr2srgb (float **fimg, gsize size, int pc)
 {
   /* using JPEG conversion here - expecting all channels to be
    * in [0:255] range */
-  int i;
+  gsize i;
   float r, g, b;
 
   if (pc > 3) { /* single channel, colour */
@@ -75,10 +75,10 @@ ycbcr2srgb (float **fimg, int size, int pc)
 }
 
 void
-srgb2xyz (float **fimg, int size)
+srgb2xyz (float **fimg, gsize size)
 {
   /* fimg in [0:1], sRGB */
-  int i;
+  gsize i;
   float x, y, z;
 
   for (i = 0; i < size; i++) {
@@ -106,9 +106,9 @@ srgb2xyz (float **fimg, int size)
 }
 
 void
-xyz2srgb (float **fimg, int size, int pc)
+xyz2srgb (float **fimg, gsize size, int pc)
 {
-  int i;
+  gsize i;
   float r, g, b;
 
   if (pc > 3) { /* single channel, colour */
@@ -153,9 +153,9 @@ xyz2srgb (float **fimg, int size, int pc)
   }
 }
 
-void lab2srgb (float **fimg, int size, int pc)
+void lab2srgb (float **fimg, gsize size, int pc)
 {
-  int i;
+  gsize i;
   float x, y, z;
   float neutral [] = {0.5, 0.5, 0.5};
 
@@ -209,9 +209,9 @@ void lab2srgb (float **fimg, int size, int pc)
   xyz2srgb(fimg, size, 0);
 }
 
-void srgb2lab (float **fimg, int size)
+void srgb2lab (float **fimg, gsize size)
 {
-  int i;
+  gsize i;
   float l, a, b;
   srgb2xyz(fimg, size);
   for (i = 0; i < size; i++) {
@@ -249,7 +249,7 @@ void srgb2lab (float **fimg, int size)
   }
 }
 
-void srgb2rgb(float **fimg, int size)
+void srgb2rgb(float **fimg G_GNUC_UNUSED, gsize size G_GNUC_UNUSED)
 {
   /*int i;
   for (i = 0; i < size; i++)
@@ -261,9 +261,9 @@ void srgb2rgb(float **fimg, int size)
 }
 
 void
-rgb2srgb (float **fimg, int size, int pc)
+rgb2srgb (float **fimg, gsize size, int pc)
 {
-  int i;
+  gsize i;
 
   if (pc > 3) { /* single channel, colour */
     pc -= 4;
@@ -302,7 +302,7 @@ mirror (int i, int size)
 
 /* code copied from UFRaw (which originates from dcraw) */
 static void
-hat_transform (float *temp, float *base, int st, int size, int sc)
+hat_transform (float *temp, float *base, gsize st, int size, int sc)
 {
   int i;
 
@@ -378,13 +378,13 @@ columns_pass (gsize offset, gsize count, gpointer user_data)
       /* copy the columns of the block, reading row by row */
       for (row = 0; row < d->height; row++)
 	for (b = 0; b < n; b++)
-	  block[b * d->height + row] = base[row * d->width + first + b];
+	  block[b * d->height + row] = base[(gsize) row * d->width + first + b];
 
       for (b = 0; b < n; b++)
 	{
 	  hat_transform (temp, block + b * d->height, 1, d->height, d->sc);
 	  for (row = 0; row < d->height; row++)
-	    base[row * d->width + first + b] = temp[row] * 0.25;
+	    base[(gsize) row * d->width + first + b] = temp[row] * 0.25;
 	}
     }
   g_free (block);
@@ -449,16 +449,16 @@ sum_pass (gsize offset, gsize count, gpointer user_data)
 /* actual denoising algorithm. code copied from UFRaw (originates from dcraw) */
 void
 wavelet_denoise (float *fimg[3], unsigned int width,
-		 unsigned int height, float threshold, double low, float a,
-		 float b)
+		 unsigned int height, float threshold, double low)
 {
   float thold;
-  unsigned int i, lev, lpass = 0, hpass, size;
+  unsigned int lev, lpass = 0, hpass;
+  gsize i, size;
   double stdev[5];
-  unsigned int samples[5];
+  gsize samples[5];
   level_data d;
 
-  size = width * height;
+  size = (gsize) width * height;
   d.fimg = fimg;
   d.width = width;
   d.height = height;
