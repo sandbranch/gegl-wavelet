@@ -62,7 +62,7 @@ mirror (int i, int size)
 }
 
 static void
-hat_transform (float *temp, float *base, int st, int size, int sc)
+hat_transform (float *temp, float *base, gsize st, int size, int sc)
 {
   int i;
 
@@ -91,9 +91,10 @@ wavelet_sharpen (float *fimg[3], int width, int height,
                  double amount, double radius)
 {
   float *temp, amt;
-  int i, lev, lpass = 0, hpass, size, col, row;
+  int lev, lpass = 0, hpass, col, row;
+  gsize i, size;
 
-  size = width * height;
+  size = (gsize) width * height;
   temp = g_new (float, MAX (width, height));
 
   hpass = 0;
@@ -102,15 +103,16 @@ wavelet_sharpen (float *fimg[3], int width, int height,
       lpass = ((lev & 1) + 1);
       for (row = 0; row < height; row++)
         {
-          hat_transform (temp, fimg[hpass] + row * width, 1, width, 1 << lev);
+          hat_transform (temp, fimg[hpass] + (gsize) row * width, 1, width,
+                         1 << lev);
           for (col = 0; col < width; col++)
-            fimg[lpass][row * width + col] = temp[col] * 0.25;
+            fimg[lpass][(gsize) row * width + col] = temp[col] * 0.25;
         }
       for (col = 0; col < width; col++)
         {
           hat_transform (temp, fimg[lpass] + col, width, height, 1 << lev);
           for (row = 0; row < height; row++)
-            fimg[lpass][row * width + col] = temp[row] * 0.25;
+            fimg[lpass][(gsize) row * width + col] = temp[row] * 0.25;
         }
 
       amt = amount * exp (-(lev - radius) * (lev - radius) / 1.5) + 1;
@@ -193,13 +195,8 @@ process (GeglOperation       *operation,
   const GeglRectangle *bounds;
   GeglRectangle src, dst;
   float *pixels, *fimg[3], *work[3];
-  gint c, i, size, channels;
-
-  if (o->amount <= 0.0)
-    {
-      gegl_buffer_copy (input, result, GEGL_ABYSS_NONE, output, result);
-      return TRUE;
-    }
+  gint c, channels;
+  gsize i, size;
 
   /* the area around the result, mirrored at the borders of the image like
      the plugin does at the borders of the selection */
@@ -214,8 +211,8 @@ process (GeglOperation       *operation,
   if (src.width <= 0 || src.height <= 0)
     return TRUE;
 
-  size = src.width * src.height;
-  pixels = g_new (float, (gsize) size * 4);
+  size = (gsize) src.width * src.height;
+  pixels = g_new (float, size * 4);
   for (c = 0; c < 3; c++)
     fimg[c] = g_new (float, size);
   work[1] = g_new (float, size);
@@ -273,6 +270,32 @@ process (GeglOperation       *operation,
   return TRUE;
 }
 
+/* the input is passed on untouched when there is nothing to sharpen */
+static gboolean
+operation_process (GeglOperation        *operation,
+                   GeglOperationContext *context,
+                   const gchar          *output_prop,
+                   const GeglRectangle  *result,
+                   gint                  level)
+{
+  GeglOperationClass *operation_class;
+  GeglProperties *o = GEGL_PROPERTIES (operation);
+
+  operation_class = GEGL_OPERATION_CLASS (gegl_op_parent_class);
+
+  if (o->amount <= 0.0)
+    {
+      gpointer in = gegl_operation_context_get_object (context, "input");
+
+      gegl_operation_context_take_object (context, "output",
+                                          in ? g_object_ref (in) : NULL);
+      return TRUE;
+    }
+
+  return operation_class->process (operation, context, output_prop, result,
+                                   gegl_operation_context_get_level (context));
+}
+
 static void
 gegl_op_class_init (GeglOpClass *klass)
 {
@@ -280,6 +303,7 @@ gegl_op_class_init (GeglOpClass *klass)
   GeglOperationFilterClass *filter_class = GEGL_OPERATION_FILTER_CLASS (klass);
 
   operation_class->prepare = prepare;
+  operation_class->process = operation_process;
   operation_class->get_bounding_box = get_bounding_box;
   filter_class->process = process;
 
