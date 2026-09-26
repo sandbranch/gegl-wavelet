@@ -82,11 +82,11 @@ srgb2xyz (float **fimg, int size)
   float x, y, z;
 
   for (i = 0; i < size; i++) {
-    /* scaling and gamma correction (approximate) */
-    fimg[0][i] = pow(fimg[0][i], 2.2);
-    fimg[1][i] = pow(fimg[1][i], 2.2);
-    fimg[2][i] = pow(fimg[2][i], 2.2);
- 
+    /* scaling and gamma correction (approximate); the sign is kept, as
+       pow () of the negative values of floating point images is NaN */
+    fimg[0][i] = copysign (pow (fabs (fimg[0][i]), 2.2), fimg[0][i]);
+    fimg[1][i] = copysign (pow (fabs (fimg[1][i]), 2.2), fimg[1][i]);
+    fimg[2][i] = copysign (pow (fabs (fimg[2][i]), 2.2), fimg[2][i]);
 
     /* matrix RGB -> XYZ, with D65 reference white (www.brucelindbloom.com) */
     x = 0.412424 * fimg[0][i] + 0.357579 * fimg[1][i] + 0.180464 * fimg[2][i];
