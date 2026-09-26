@@ -33,6 +33,9 @@ channel is left alone. The alpha channel is denoised only when "Denoise alpha"
 is checked, which also shows its sliders. For grayscale images only the first
 channel's sliders have an effect.
 
+Negative values of floating point images keep their sign in the CIELAB
+model, where the plug-in's code computes NaN from them.
+
 The noise is measured over the whole layer, so the filter always processes all
 of it; the results equal those of the plug-in on the whole image (identical in
 our tests on 8-bit and 16-bit, color and grayscale images, except rounding in
@@ -69,9 +72,27 @@ Restart GIMP after installing.
 
 ## Tests
 
-`tests/run.sh` runs both operations from `build/` on a test image with
-the GEGL of the Flatpak GIMP and checks that denoise removes noise and
-keeps edges, and that sharpen steepens edges and keeps flat areas.
+    tests/run.sh
+
+builds the operations into `tests/output` (with `gimp-build.sh` of
+[gimp-plugin-devtools](https://github.com/sandbranch/gimp-plugin-devtools)
+next to this repository) and runs them with the GEGL of the Flatpak GIMP,
+without a window and without touching installed operations. It prints PASS
+or FAIL per check and exits with 1 if any failed:
+
+- the command line `gegl` on a test image: denoise removes noise and keeps
+  edges, sharpen steepens edges and keeps flat areas;
+- `tests/check.py`: the results against a numpy version of the plug-ins'
+  algorithms, on RGB, grayscale, with and without alpha, in all colour
+  models, on images from 1 x 1 pixel to below and above the largest wavelet
+  scale; rendering in tiles, with 1 or more threads, with small GEGL tiles
+  and at another image origin must give the same result bit for bit;
+  amount 0 and zero thresholds return the input; values outside [0,1], NaN
+  and infinity, inputs without bounds and too little memory;
+- `tests/check.py` again, on a build with AddressSanitizer and
+  UndefinedBehaviorSanitizer.
+
+It needs python3 with numpy and PIL on the host.
 
 ## License
 
