@@ -23,10 +23,10 @@ import numpy as np
 here = os.path.dirname(os.path.abspath(__file__))
 out = os.path.join(here, 'output', 'check')
 # GEGL runs in the GIMP Flatpak isolated from the user's folders by
-# gimp-plugin-devtools/gimp-run.sh (HOME and the XDG folders in a
+# gimp-devtools/gimp-run.sh (HOME and the XDG folders in a
 # throwaway home), so that nothing lands in ~/.var/app/org.gimp.GIMP
 devtools = os.environ.get('GIMP_PLUGIN_DEVTOOLS',
-                          os.path.join(here, '..', '..', 'gimp-plugin-devtools'))
+                          os.path.join(here, '..', '..', 'gimp-devtools'))
 gimp_run = os.path.join(devtools, 'gimp-run.sh')
 run_home = os.environ.get('GIMP_RUN_HOME', os.path.join(here, 'output', 'gimp-home'))
 f32 = np.float32

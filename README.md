@@ -75,7 +75,7 @@ Restart GIMP after installing.
     tests/run.sh
 
 builds the operations into `tests/output` (with `gimp-build.sh` of
-[gimp-plugin-devtools](https://github.com/sandbranch/gimp-plugin-devtools)
+[gimp-devtools](https://github.com/sandbranch/gimp-devtools)
 next to this repository) and runs them with the GEGL of the Flatpak GIMP,
 without a window and without touching installed operations. It prints PASS
 or FAIL per check and exits with 1 if any failed:

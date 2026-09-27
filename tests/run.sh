@@ -1,7 +1,7 @@
 #!/bin/sh
 # Builds the operations into tests/output and checks them with the GEGL of
 # the Flatpak GIMP, without a window and without touching installed
-# operations. Needs gimp-plugin-devtools next to this repo.
+# operations. Needs gimp-devtools next to this repo.
 #
 # 1. the command line gegl on a test image: denoise removes noise and keeps
 #    the edge, sharpen steepens the edge and keeps flat areas;
@@ -11,10 +11,10 @@
 #    UndefinedBehaviorSanitizer.
 #
 # GEGL runs in the Flatpak isolated from your folders (tests/isolate.sh,
-# with gimp-plugin-devtools/gimp-run.sh): HOME and the XDG folders inside
+# with gimp-devtools/gimp-run.sh): HOME and the XDG folders inside
 # it point into tests/output/gimp-home, so nothing lands in
 # ~/.var/app/org.gimp.GIMP. Before and after, it lists your folders of
-# GIMP and the other apps (gimp-plugin-devtools/snapshot.sh) and fails if
+# GIMP and the other apps (gimp-devtools/snapshot.sh) and fails if
 # anything there changed.
 #
 # Prints PASS or FAIL per check and exits with 1 if any failed.
@@ -22,7 +22,7 @@ set -e
 here=$(cd "$(dirname "$0")" && pwd)
 top=$(dirname "$here")
 out="$here/output"
-build="$top/../gimp-plugin-devtools/gimp-build.sh"
+build="$top/../gimp-devtools/gimp-build.sh"
 mkdir -p "$out"
 src=$top
 GIMP_RUN_HOME=$out/gimp-home
