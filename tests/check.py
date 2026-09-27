@@ -22,6 +22,13 @@ import numpy as np
 
 here = os.path.dirname(os.path.abspath(__file__))
 out = os.path.join(here, 'output', 'check')
+# GEGL runs in the GIMP Flatpak isolated from the user's folders by
+# gimp-plugin-devtools/gimp-run.sh (HOME and the XDG folders in a
+# throwaway home), so that nothing lands in ~/.var/app/org.gimp.GIMP
+devtools = os.environ.get('GIMP_PLUGIN_DEVTOOLS',
+                          os.path.join(here, '..', '..', 'gimp-plugin-devtools'))
+gimp_run = os.path.join(devtools, 'gimp-run.sh')
+run_home = os.environ.get('GIMP_RUN_HOME', os.path.join(here, 'output', 'gimp-home'))
 f32 = np.float32
 os.makedirs(out, exist_ok=True)
 for f in os.listdir(out):
@@ -511,7 +518,7 @@ def run(modules, asan):
         job = os.path.join(out, 'job-%s.json' % group)
         report = os.path.join(out, 'report-%s.json' % group)
         json.dump({'config': config, 'cases': cases}, open(job, 'w'))
-        cmd = ['flatpak', 'run', '--filesystem=' + here,
+        cmd = [gimp_run, '--flatpak', '--home=' + run_home, '--filesystem=' + here,
                '--filesystem=' + modules, '--env=GEGL_PATH=' + gegl_path]
         if asan:
             cmd += ['--devel',
@@ -525,7 +532,7 @@ def run(modules, asan):
                 continue
             run = ['sh', '-c', 'ulimit -v %d && exec "$@"' % LOWMEM,
                    'sh'] + run
-        cmd += ['--command=' + run[0], 'org.gimp.GIMP'] + run[1:]
+        cmd += ['--'] + run
         p = subprocess.run(cmd, capture_output=True, text=True)
         log = p.stdout + p.stderr
         if p.returncode != 0 or 'runtime error' in log or 'ERROR: Address' \

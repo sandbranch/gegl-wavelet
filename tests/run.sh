@@ -10,6 +10,13 @@
 # 3. tests/check.py again, on a build with AddressSanitizer and
 #    UndefinedBehaviorSanitizer.
 #
+# GEGL runs in the Flatpak isolated from your folders (tests/isolate.sh,
+# with gimp-plugin-devtools/gimp-run.sh): HOME and the XDG folders inside
+# it point into tests/output/gimp-home, so nothing lands in
+# ~/.var/app/org.gimp.GIMP. Before and after, it lists your folders of
+# GIMP and the other apps (gimp-plugin-devtools/snapshot.sh) and fails if
+# anything there changed.
+#
 # Prints PASS or FAIL per check and exits with 1 if any failed.
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
@@ -17,6 +24,12 @@ top=$(dirname "$here")
 out="$here/output"
 build="$top/../gimp-plugin-devtools/gimp-build.sh"
 mkdir -p "$out"
+src=$top
+GIMP_RUN_HOME=$out/gimp-home
+export GIMP_RUN_HOME
+# shellcheck source=SCRIPTDIR/isolate.sh
+. "$here/isolate.sh"
+snapshot_take "$out/snapshot-before.txt"
 
 # GEGL_PATH replaces GEGL's own list, and a build folder holds files GEGL
 # must not load, so the modules are copied into a folder of their own
@@ -35,7 +48,7 @@ mod="$out/build-modules"
 python3 "$here/make-image.py" "$out/test.png"
 run () {
   name=$1; shift
-  flatpak run --filesystem="$here" --env=GEGL_PATH="$mod:/app/lib/gegl-0.4" --command=gegl org.gimp.GIMP \
+  gimp_run --flatpak --filesystem="$here" --env=GEGL_PATH="$mod:/app/lib/gegl-0.4" -- gegl \
     "$out/test.png" -o "$out/$name.png" -- "$@" 2>&1 | grep -v -i "leak\|warning\|^$" || true
 }
 run denoise wavelet:denoise threshold-1=2 threshold-2=2 threshold-3=2
@@ -71,5 +84,6 @@ echo "== checks with AddressSanitizer and UndefinedBehaviorSanitizer"
 python3 "$here/check.py" "$out/build-asan-modules" --asan > "$out/asan.log" 2>&1 \
   || fails=1
 grep -v '^PASS' "$out/asan.log"
+snapshot_check "$out/snapshot-before.txt" "" || fails=1
 if [ $fails = 0 ]; then echo "all passed"; else echo "FAILED"; fi
 exit $fails
