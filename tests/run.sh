@@ -1,19 +1,20 @@
 #!/bin/sh
-# Builds the operations into tests/output and checks them with the GEGL of
-# the Flatpak GIMP, without a window and without touching installed
+# Builds the operations into tests/output and checks them with the native
+# GEGL that GIMP uses, without a window and without touching installed
 # operations. Needs gimp-devtools next to this repo.
 #
-# 1. the command line gegl on a test image: denoise removes noise and keeps
+# 1. the command line gegl on a test image (tests/gegl-cli.py does the
+#    same when the gegl program is not installed): denoise removes noise and keeps
 #    the edge, sharpen steepens the edge and keeps flat areas;
 # 2. tests/check.py: the results against the algorithms of the plug-ins,
 #    tiled against whole rendering and the edge cases;
 # 3. tests/check.py again, on a build with AddressSanitizer and
 #    UndefinedBehaviorSanitizer.
 #
-# GEGL runs in the Flatpak isolated from your folders (tests/isolate.sh,
-# with gimp-devtools/gimp-run.sh): HOME and the XDG folders inside
-# it point into tests/output/gimp-home, so nothing lands in
-# ~/.var/app/org.gimp.GIMP. Before and after, it lists your folders of
+# GEGL runs isolated from your folders (tests/isolate.sh, with
+# gimp-devtools/gimp-run.sh): HOME and the XDG folders point into
+# tests/output/gimp-home, so nothing lands in your own GEGL, babl or GIO
+# folders. Before and after, it lists your folders of
 # GIMP and the other apps (gimp-devtools/snapshot.sh) and fails if
 # anything there changed.
 #
@@ -44,12 +45,22 @@ modules () {
 modules build
 modules build-asan "-Db_sanitize=address,undefined -Db_lundef=false"
 mod="$out/build-modules"
+# GEGL's own operations, which GEGL_PATH replaces
+gegl_ops=$(pkg-config --variable=pluginsdir gegl-0.4)
+if command -v gegl >/dev/null 2>&1; then gegl_cli=gegl
+else gegl_cli=tests/gegl-cli.py; fi
+echo "== command line: $gegl_cli"
 
 python3 "$here/make-image.py" "$out/test.png"
 run () {
   name=$1; shift
-  gimp_run --flatpak --filesystem="$here" --env=GEGL_PATH="$mod:/app/lib/gegl-0.4" -- gegl \
-    "$out/test.png" -o "$out/$name.png" -- "$@" 2>&1 | grep -v -i "leak\|warning\|^$" || true
+  if [ "$gegl_cli" = gegl ]; then
+    set -- gegl "$out/test.png" -o "$out/$name.png" -- "$@"
+  else
+    set -- python3 "$here/gegl-cli.py" "$out/test.png" "$out/$name.png" "$@"
+  fi
+  gimp_run --env=GEGL_PATH="$mod:$gegl_ops" -- "$@" 2>&1 |
+    grep -v -i "leak\|warning\|^$" || true
 }
 run denoise wavelet:denoise threshold-1=2 threshold-2=2 threshold-3=2
 run sharpen wavelet:sharpen amount=1 radius=0.5

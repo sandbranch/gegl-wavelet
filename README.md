@@ -47,26 +47,15 @@ filter; GIMP's split view compares the result with the original instead.
 
 ## Building and installing
 
-Needs meson, ninja, a C compiler and the GEGL development files (0.4.62 or
-newer; libgegl-dev on Debian and Ubuntu).
+For the native GIMP 3. Needs meson, ninja, a C compiler and the GEGL
+development files (0.4.62 or newer); on Debian and Ubuntu:
 
-GEGL loads user operations from `~/.local/share/gegl-0.4/plug-ins`:
+    sudo apt install gimp libgimp-3.0-dev meson ninja-build
+
+GIMP loads user operations of GEGL from `~/.local/share/gegl-0.4/plug-ins`:
 
     meson setup build -Dmoduledir=$HOME/.local/share/gegl-0.4/plug-ins
     ninja -C build install
-
-### Flatpak GIMP
-
-The Flatpak version of GIMP reads them from
-`~/.var/app/org.gimp.GIMP/data/gegl-0.4/plug-ins`. Build against the GEGL of
-the Flatpak, using the GNOME SDK that GIMP was built with (see
-`flatpak info org.gimp.GIMP`):
-
-    flatpak install --user flathub org.gnome.Sdk//50
-    flatpak run --devel --filesystem=$PWD \
-      --env=PKG_CONFIG_PATH=/app/lib/pkgconfig --command=sh org.gimp.GIMP -c \
-      'meson setup build -Dmoduledir=$XDG_DATA_HOME/gegl-0.4/plug-ins &&
-       ninja -C build install'
 
 Restart GIMP after installing.
 
@@ -76,11 +65,12 @@ Restart GIMP after installing.
 
 builds the operations into `tests/output` (with `gimp-build.sh` of
 [gimp-devtools](https://github.com/sandbranch/gimp-devtools)
-next to this repository) and runs them with the GEGL of the Flatpak GIMP,
+next to this repository) and runs them with the native GEGL that GIMP uses,
 without a window and without touching installed operations. It prints PASS
 or FAIL per check and exits with 1 if any failed:
 
-- the command line `gegl` on a test image: denoise removes noise and keeps
+- the command line `gegl` on a test image (the gegl package; without it
+  `tests/gegl-cli.py` does the same with GEGL's Python bindings): denoise removes noise and keeps
   edges, sharpen steepens edges and keeps flat areas;
 - `tests/check.py`: the results against a numpy version of the plug-ins'
   algorithms, on RGB, grayscale, with and without alpha, in all colour
@@ -92,7 +82,8 @@ or FAIL per check and exits with 1 if any failed:
 - `tests/check.py` again, on a build with AddressSanitizer and
   UndefinedBehaviorSanitizer.
 
-It needs python3 with numpy and PIL on the host.
+It needs python3 with numpy, PIL and GEGL's GObject introspection
+(gir1.2-gegl-0.4 on Debian and Ubuntu).
 
 ## License
 

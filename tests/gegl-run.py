@@ -1,5 +1,5 @@
-# Runs inside the Python of the Flatpak GIMP (tests/check.py starts it),
-# which has GEGL but no numpy: renders the cases of a job file with GEGL
+# Runs with GEGL's Python bindings, without numpy (tests/check.py starts
+# it in a process of its own, isolated from your folders): renders the cases of a job file with GEGL
 # and writes the results as raw floats.
 #
 # The job is JSON: {"config": {GEGL config properties}, "cases": [...]}.

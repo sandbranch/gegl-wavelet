@@ -7,10 +7,11 @@
 #   tests/check.py <folder with the .so files> [--asan]
 #
 # --asan: the .so files are built with -Db_sanitize=address,undefined;
-# runs them with the sanitizer libraries of the SDK preloaded.
+# runs them with the compiler's sanitizer libraries preloaded.
 #
-# The operations run in the Python of the Flatpak GIMP (tests/gegl-run.py),
-# the comparisons here with numpy. Prints PASS or FAIL per case and exits
+# The operations run with the native GEGL in its Python bindings
+# (tests/gegl-run.py, in a process of its own), the comparisons here with
+# numpy. Prints PASS or FAIL per case and exits
 # with 1 if any failed.
 import json
 import math
@@ -22,9 +23,9 @@ import numpy as np
 
 here = os.path.dirname(os.path.abspath(__file__))
 out = os.path.join(here, 'output', 'check')
-# GEGL runs in the GIMP Flatpak isolated from the user's folders by
-# gimp-devtools/gimp-run.sh (HOME and the XDG folders in a
-# throwaway home), so that nothing lands in ~/.var/app/org.gimp.GIMP
+# GEGL runs isolated from the user's folders by gimp-devtools/gimp-run.sh
+# (HOME and the XDG folders in a throwaway home), so that nothing lands in
+# the user's own GEGL, babl or GIO folders
 devtools = os.environ.get('GIMP_PLUGIN_DEVTOOLS',
                           os.path.join(here, '..', '..', 'gimp-devtools'))
 gimp_run = os.path.join(devtools, 'gimp-run.sh')
@@ -512,17 +513,19 @@ check('denoise: image left as it is without memory',
 
 def run(modules, asan):
     results = {}
-    gegl_path = modules + ':/app/lib/gegl-0.4'
+    # GEGL_PATH replaces GEGL's own list: its own operations too
+    gegl_ops = subprocess.run(['pkg-config', '--variable=pluginsdir', 'gegl-0.4'],
+                              capture_output=True, text=True,
+                              check=True).stdout.strip()
+    gegl_path = modules + ':' + gegl_ops
     for group, config in GROUPS.items():
         cases = [c for g, c, _ in renders.values() if g == group]
         job = os.path.join(out, 'job-%s.json' % group)
         report = os.path.join(out, 'report-%s.json' % group)
         json.dump({'config': config, 'cases': cases}, open(job, 'w'))
-        cmd = [gimp_run, '--flatpak', '--home=' + run_home, '--filesystem=' + here,
-               '--filesystem=' + modules, '--env=GEGL_PATH=' + gegl_path]
+        cmd = [gimp_run, '--home=' + run_home, '--env=GEGL_PATH=' + gegl_path]
         if asan:
-            cmd += ['--devel',
-                    '--env=LD_PRELOAD=libasan.so.8:libubsan.so.1',
+            cmd += ['--env=LD_PRELOAD=libasan.so.8:libubsan.so.1',
                     '--env=ASAN_OPTIONS=detect_leaks=0:abort_on_error=0',
                     '--env=UBSAN_OPTIONS=print_stacktrace=1']
         run = ['python3', os.path.join(here, 'gegl-run.py'), job, report]
